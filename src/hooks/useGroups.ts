@@ -1,0 +1,111 @@
+import { useLiveQuery } from 'dexie-react-hooks'
+import { useMemo } from 'react'
+import { db } from '@/db'
+import { groupTransfers, memberNets, type ShareStatus, shareStatuses, type Transfer } from '@/lib/groupMath'
+import type { Group, GroupExpense, GroupMember, Settlement } from '@/lib/groupTypes'
+import { useSyncStore } from '@/sync/controller'
+
+/** Signed-in user id, falling back to the account this device is linked to (works offline). */
+export function useMyUserId(): string | null {
+  const live = useSyncStore((s) => s.user?.id ?? null)
+  const stored = useLiveQuery(async () => {
+    const v = (await db.syncState.get('userId'))?.value
+    return typeof v === 'string' ? v : null
+  }, [], null)
+  return live ?? stored
+}
+
+export interface GroupSummary {
+  group: Group
+  members: GroupMember[]
+  meId: string | null
+  /** Positive: the group owes me. */
+  myNet: number
+  expenseCount: number
+  lastActivity: number
+}
+
+export function useGroupSummaries(): GroupSummary[] | undefined {
+  const userId = useMyUserId()
+  return useLiveQuery(async () => {
+    const [groups, members, expenses, settlements] = await Promise.all([
+      db.groups.toArray(),
+      db.groupMembers.toArray(),
+      db.groupExpenses.toArray(),
+      db.groupSettlements.toArray(),
+    ])
+    return groups
+      .map((group) => {
+        const gm = members.filter((m) => m.groupId === group.id)
+        const ge = expenses.filter((e) => e.groupId === group.id)
+        const gs = settlements.filter((s) => s.groupId === group.id)
+        const me = gm.find((m) => m.userId === userId && !m.leftAt) ?? null
+        const nets = memberNets(ge, gs)
+        return {
+          group,
+          members: gm.filter((m) => !m.leftAt),
+          meId: me?.id ?? null,
+          myNet: me ? (nets.get(me.id) ?? 0) : 0,
+          expenseCount: ge.filter((e) => !e.deletedAt).length,
+          lastActivity: Math.max(group.updatedAt, ...ge.map((e) => e.updatedAt), ...gs.map((s) => s.updatedAt)),
+        }
+      })
+      .sort((a, b) => b.lastActivity - a.lastActivity)
+  }, [userId])
+}
+
+export interface GroupData {
+  group: Group
+  members: GroupMember[]
+  activeMembers: GroupMember[]
+  memberMap: Map<string, GroupMember>
+  meId: string | null
+  expenses: GroupExpense[]
+  settlements: Settlement[]
+  nets: Map<string, number>
+  transfers: Transfer[]
+  statuses: Map<string, ShareStatus[]>
+}
+
+/** undefined while loading, null if the group isn't on this device. */
+export function useGroupData(groupId: string | null | undefined): GroupData | null | undefined {
+  const userId = useMyUserId()
+  const raw = useLiveQuery(async () => {
+    if (!groupId) return null
+    const group = await db.groups.get(groupId)
+    if (!group) return null
+    const [members, expenses, settlements] = await Promise.all([
+      db.groupMembers.where('groupId').equals(groupId).toArray(),
+      db.groupExpenses.where('groupId').equals(groupId).toArray(),
+      db.groupSettlements.where('groupId').equals(groupId).toArray(),
+    ])
+    return { group, members, expenses, settlements }
+  }, [groupId])
+
+  return useMemo(() => {
+    if (raw === undefined) return undefined
+    if (raw === null) return null
+    const { group, members, expenses, settlements } = raw
+    const live = expenses.filter((e) => !e.deletedAt).sort((a, b) => b.occurredAt - a.occurredAt)
+    const liveSettlements = settlements.filter((s) => !s.deletedAt).sort((a, b) => b.occurredAt - a.occurredAt)
+    return {
+      group,
+      members,
+      activeMembers: members.filter((m) => !m.leftAt),
+      memberMap: new Map(members.map((m) => [m.id, m])),
+      meId: members.find((m) => m.userId === userId && !m.leftAt)?.id ?? null,
+      expenses: live,
+      settlements: liveSettlements,
+      nets: memberNets(live, liveSettlements),
+      transfers: groupTransfers(group.simplifyDebts, live, liveSettlements),
+      statuses: shareStatuses(live, liveSettlements, group.simplifyDebts),
+    }
+  }, [raw, userId])
+}
+
+/** "You", a member's name, or "Someone". */
+export function memberLabel(data: Pick<GroupData, 'meId' | 'memberMap'>, memberId: string | null | undefined): string {
+  if (!memberId) return 'Someone'
+  if (memberId === data.meId) return 'You'
+  return data.memberMap.get(memberId)?.displayName ?? 'Someone'
+}

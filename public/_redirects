@@ -1,0 +1,2 @@
+# Netlify: serve the app for any path that isn't a real file (e.g. /join/<token>, /groups/<id>).
+/*    /index.html   200

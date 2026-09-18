@@ -62,6 +62,7 @@ The service worker, camera and install features need **HTTPS**, so deploy the `d
 
 1. `npm run build`
 2. Deploy `dist/`, for example with `npx vercel deploy dist --prod` or `npx netlify deploy --dir dist --prod`, or on Cloudflare Pages. SPA fallback to `index.html` is needed; Vercel and Netlify handle it automatically for Vite projects.
+   Deep links such as invite links (`/join/<token>`) need the host to serve `index.html` for unknown paths. `vercel.json` (Vercel) and `public/_redirects` (Netlify) already do this. Cloudflare Pages does it automatically.
 3. Open the URL in Chrome on Android, then tap **⋮ → Install app** (or use *More → Install Evenly* inside the app).
 
 To try it on your phone over Wi-Fi without deploying, run `npm run dev` and open `http://<your-PC-IP>:5173`. Installing and offline mode need HTTPS, though.

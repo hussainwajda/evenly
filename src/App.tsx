@@ -1,6 +1,6 @@
 import { createBrowserRouter, RouterProvider } from 'react-router'
 import { AppShell } from '@/components/layout/AppShell'
-import { RouteError } from '@/components/layout/RouteError'
+import { RouteError } from '@/components/layout/RouteError';
 import { Toaster } from '@/components/ui/sonner'
 import { AccountPage } from '@/pages/AccountPage'
 import { ActivityPage } from '@/pages/ActivityPage'

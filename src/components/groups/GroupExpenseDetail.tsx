@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { CircleCheck, Clock, Pencil } from 'lucide-react'
+import { CircleCheck, Clock, Info, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
 import { CategoryIcon } from '@/components/CategoryIcon'
@@ -11,7 +11,8 @@ import { db } from '@/db'
 import { useCategoryMap } from '@/hooks/useData'
 import { memberLabel, useGroupData } from '@/hooks/useGroups'
 import { formatShortDate } from '@/lib/dates'
-import type { ShareStatus } from '@/lib/groupMath'
+import { canConfirmPayment, type ShareStatus } from '@/lib/groupMath'
+import type { Settlement } from '@/lib/groupTypes'
 import { formatINR } from '@/lib/money'
 import { cn, uid } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
@@ -21,6 +22,7 @@ export function GroupExpenseDetail() {
   const sheet = useUi((s) => s.groupDetail)
   const close = useUi((s) => s.closeGroupDetail)
   const openGroupExpense = useUi((s) => s.openGroupExpense)
+  const openPaymentDetail = useUi((s) => s.openPaymentDetail)
   const navigate = useNavigate()
   const categoryMap = useCategoryMap()
   const expense = useLiveQuery(() => (sheet.expenseId ? db.groupExpenses.get(sheet.expenseId) : undefined), [sheet.expenseId])
@@ -49,9 +51,16 @@ export function GroupExpenseDetail() {
 
   async function respond(st: ShareStatus, status: 'confirmed' | 'disputed') {
     if (!expense || !data) return
-    const ids = data.settlements.filter((s) => s.expenseId === expense.id && s.from === st.memberId && s.status === 'recorded').map((s) => s.id)
-    await setSettlementStatus(db, ids, status)
-    toast(status === 'confirmed' ? 'Confirmed. Thanks!' : 'Marked as not received')
+    const ids = st.coveredBy
+      .map((c) => data.settlements.find((s) => s.id === c.settlementId))
+      .filter((s): s is Settlement => Boolean(s && s.status === 'recorded' && canConfirmPayment(s, me)))
+      .map((s) => s.id)
+    try {
+      await setSettlementStatus(db, ids, status)
+      toast(status === 'confirmed' ? 'Confirmed. Thanks!' : 'Marked as not received')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update the payment')
+    }
   }
 
   const category = expense ? categoryMap.get(expense.categoryId) : undefined
@@ -123,13 +132,44 @@ export function GroupExpenseDetail() {
                                 ? `Paid ${formatINR(st.paid)} · ${formatINR(st.remaining)} left`
                                 : st.state === 'paid'
                                   ? st.settledOverall
-                                    ? 'Settled up in the group'
+                                    ? 'Balanced out'
                                     : `Marked paid · waiting for ${payerName.toLowerCase() === 'you' ? 'you' : payerName} to confirm`
                                   : 'Settled'}
                         </p>
                       </div>
                       <span className="money font-semibold">{formatINR(st.share)}</span>
                     </div>
+
+                    {st.settledOverall ? (
+                      <p className="flex gap-1.5 rounded-xl bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                        <Info className="mt-px size-3.5 shrink-0" aria-hidden />
+                        No payment was recorded for this bill. It shows as done because simplify debts is on and {isMe ? 'your' : `${who}'s`} overall balance
+                        in the group is clear.
+                      </p>
+                    ) : null}
+                    {st.coveredBy.length ? (
+                      <ul className="space-y-1 pl-12">
+                        {st.coveredBy.map((c) => {
+                          const s = data.allSettlements.find((x) => x.id === c.settlementId)
+                          if (!s) return null
+                          const by = s.createdBy ? memberLabel(data, s.createdBy) : null
+                          return (
+                            <li key={c.settlementId}>
+                              <button
+                                type="button"
+                                className="text-left text-xs text-muted-foreground underline-offset-4 hover:underline"
+                                onClick={() => openPaymentDetail(s.id)}
+                              >
+                                {formatINR(c.amount)} covered by {s.expenseId === expense.id ? 'a payment for this bill' : `a ${formatINR(s.amount)} payment`} on{' '}
+                                {formatShortDate(s.occurredAt)}
+                                {by ? ` · recorded by ${by === 'You' ? 'you' : by}` : ''}
+                                {s.status === 'confirmed' ? ' · confirmed' : ' · not confirmed yet'}
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    ) : null}
 
                     {(st.state === 'pending' || st.state === 'partial') && isMe ? (
                       <Button className="h-11 w-full" onClick={() => void iPaid(st)}>

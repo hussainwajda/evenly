@@ -174,9 +174,19 @@ export async function savePerson(input: { name: string; phone?: string; note?: s
     note: input.note?.trim() ?? existing?.note ?? '',
     archived: existing?.archived ?? false,
     createdAt: existing?.createdAt ?? Date.now(),
+    linkedUserId: existing?.linkedUserId ?? null,
   }
   await db.people.put(person)
   return person.id
+}
+
+/** Links a private People entry to a friend's Evenly account (or unlinks it). One entry per friend. */
+export async function linkPersonToFriend(personId: string | null, userId: string): Promise<void> {
+  await db.transaction('rw', db.people, async () => {
+    const current = await db.people.filter((p) => p.linkedUserId === userId).toArray()
+    for (const p of current) if (p.id !== personId) await db.people.update(p.id, { linkedUserId: null })
+    if (personId) await db.people.update(personId, { linkedUserId: userId })
+  })
 }
 
 export async function getOrCreatePerson(name: string): Promise<string> {

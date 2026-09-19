@@ -24,6 +24,11 @@ A personal expense tracker that replaces the `monthly expenses.xlsx` spreadsheet
   - Comparison with last month at the same point
   - Most frequent items and payment method split
   - People balances and recent expenses
+- **Shared groups (Splitwise-style):** invite links, split methods, per-share "paid / confirmed", settle up.
+  - **Clear balances:** tap any balance for a statement between two people: every bill and payment, how each one moved the balance, and a running total. Filter it, share it on WhatsApp or download it as CSV.
+  - **Simplify debts** is off by default (group-wide). When it's on, "Why this amount?" shows each person's total and the direct debts it replaces.
+  - **Payment history:** a Payments tab with filters, and for every payment who recorded, edited, confirmed or deleted it, and which bills it paid off. Only the receiver can confirm; only the recorder or receiver can delete.
+  - **Friends:** one page per friend across all shared groups, optionally including your private lend/borrow entries for them (visible only to you).
 - **Recurring expenses:** rent, wifi, recharge and similar show up on Home when due. Add or skip each one with a tap.
 - **Excel import:** reads the day-block sheets on the device.
   - Guesses the month and year of each sheet, and you can correct them.

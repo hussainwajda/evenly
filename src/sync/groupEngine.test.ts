@@ -3,12 +3,15 @@ import { KharchaDB } from '@/db'
 import type { Group, GroupExpense, GroupMember } from '@/lib/groupTypes'
 import {
   deleteGroupExpense,
+  deleteSettlement,
   derivedTxnId,
   type GroupRecord,
   type GroupRecordIn,
   type GroupRemote,
+  restoreSettlement,
   saveGroupExpense,
   saveSettlement,
+  setSettlementStatus,
   syncGroups,
 } from './groupEngine'
 import { enqueueAllLocal } from './engine'
@@ -150,6 +153,38 @@ describe('group sync', () => {
     await syncGroups(a, server.remote('u1'))
     expect((await a.groupExpenses.get('e1'))?.deletedAt).toBeTypeOf('number')
     expect(await a.transactions.get(derivedTxnId('e1'))).toBeUndefined()
+  })
+
+  it('keeps a history of who recorded, confirmed and deleted a payment, and enforces who may', async () => {
+    const server = setupServer()
+    const a = await device('u1')
+    const b = await device('u2')
+    await syncGroups(a, server.remote('u1'))
+    await syncGroups(b, server.remote('u2'))
+
+    await saveSettlement(b, {
+      id: 's1', groupId: 'g1', from: 'm2', to: 'm1', amount: 30000, method: 'cash', occurredAt: 5, note: '', expenseId: null, status: 'recorded',
+    })
+    // Rahul paid it, so he can't confirm it himself.
+    await expect(setSettlementStatus(b, ['s1'], 'confirmed')).rejects.toThrow(/received/)
+    await syncGroups(b, server.remote('u2'))
+    await syncGroups(a, server.remote('u1'))
+
+    await setSettlementStatus(a, ['s1'], 'confirmed')
+    await syncGroups(a, server.remote('u1'))
+    await syncGroups(b, server.remote('u2'))
+    const s = await b.groupSettlements.get('s1')
+    expect(s).toMatchObject({ status: 'confirmed', createdBy: 'm2' })
+    expect(s?.history?.map((h) => [h.action, h.by])).toEqual([
+      ['recorded', 'm2'],
+      ['confirmed', 'm1'],
+    ])
+
+    await deleteSettlement(a, 's1')
+    await syncGroups(a, server.remote('u1'))
+    await syncGroups(b, server.remote('u2'))
+    await restoreSettlement(b, 's1')
+    expect((await b.groupSettlements.get('s1'))?.history?.at(-1)).toMatchObject({ action: 'restored', by: 'm2' })
   })
 
   it('a newer local edit survives an older remote copy', async () => {

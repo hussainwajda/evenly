@@ -7,7 +7,8 @@
  */
 import type { KharchaDB } from '@/db'
 import { markRemote } from '@/db/syncMiddleware'
-import type { Group, GroupExpense, GroupMember, GroupRecordKind, Settlement, SettlementStatus } from '@/lib/groupTypes'
+import { canConfirmPayment, canManagePayment } from '@/lib/groupMath'
+import type { Group, GroupExpense, GroupMember, GroupRecordKind, Settlement, SettlementEvent } from '@/lib/groupTypes'
 import type { Transaction } from '@/lib/types'
 
 export interface GroupRecordIn {
@@ -129,25 +130,70 @@ export async function restoreGroupExpense(db: KharchaDB, id: string): Promise<vo
   if (e) await writeLocal(db, 'expense', { ...e, deletedAt: null, updatedAt: Date.now() })
 }
 
-export async function saveSettlement(db: KharchaDB, s: Omit<Settlement, 'updatedAt' | 'deletedAt'>): Promise<void> {
-  await writeLocal(db, 'settlement', { ...s, updatedAt: Date.now(), deletedAt: null })
+/** My member id in a group (null when signed out or not a member). */
+async function myMemberId(db: KharchaDB, groupId: string): Promise<string | null> {
+  const userId = await currentUserId(db)
+  if (!userId) return null
+  const members = await db.groupMembers.where('groupId').equals(groupId).toArray()
+  return members.find((m) => m.userId === userId && !m.leftAt)?.id ?? null
 }
 
-export async function setSettlementStatus(db: KharchaDB, ids: string[], status: SettlementStatus): Promise<void> {
+const HISTORY_LIMIT = 50
+
+function withEvent(s: Settlement, event: SettlementEvent): SettlementEvent[] {
+  return [...(s.history ?? []), event].slice(-HISTORY_LIMIT)
+}
+
+/** Records a new payment, or saves changes to one (logged as an edit when the amount changes). */
+export async function saveSettlement(db: KharchaDB, s: Omit<Settlement, 'updatedAt' | 'deletedAt' | 'createdBy' | 'createdAt' | 'history'>): Promise<void> {
+  const now = Date.now()
+  const me = await myMemberId(db, s.groupId)
+  const existing = await db.groupSettlements.get(s.id)
+  if (existing) {
+    if (!canManagePayment(existing, me)) throw new Error('Only the person who recorded this payment, or who received it, can change it')
+    const history =
+      existing.amount !== s.amount ? withEvent(existing, { at: now, by: me, action: 'edited', amount: s.amount, prevAmount: existing.amount }) : existing.history
+    await writeLocal(db, 'settlement', { ...existing, ...s, history, updatedAt: now })
+    return
+  }
+  await writeLocal(db, 'settlement', {
+    ...s,
+    createdBy: me,
+    createdAt: now,
+    history: [{ at: now, by: me, action: 'recorded' }],
+    updatedAt: now,
+    deletedAt: null,
+  })
+}
+
+/** Confirm a payment arrived, or say it didn't. Only the receiver can. */
+export async function setSettlementStatus(db: KharchaDB, ids: string[], status: 'confirmed' | 'disputed'): Promise<void> {
+  const now = Date.now()
   for (const id of ids) {
     const s = await db.groupSettlements.get(id)
-    if (s) await writeLocal(db, 'settlement', { ...s, status, updatedAt: Date.now() })
+    if (!s || s.status === status) continue
+    const me = await myMemberId(db, s.groupId)
+    if (!canConfirmPayment(s, me)) throw new Error('Only the person who received this payment can confirm it')
+    await writeLocal(db, 'settlement', { ...s, status, history: withEvent(s, { at: now, by: me, action: status }), updatedAt: now })
   }
 }
 
 export async function deleteSettlement(db: KharchaDB, id: string): Promise<void> {
   const s = await db.groupSettlements.get(id)
-  if (s) await writeLocal(db, 'settlement', { ...s, deletedAt: Date.now(), updatedAt: Date.now() })
+  if (!s || s.deletedAt) return
+  const me = await myMemberId(db, s.groupId)
+  if (!canManagePayment(s, me)) throw new Error('Only the person who recorded this payment, or who received it, can delete it')
+  const now = Date.now()
+  await writeLocal(db, 'settlement', { ...s, deletedAt: now, history: withEvent(s, { at: now, by: me, action: 'deleted' }), updatedAt: now })
 }
 
 export async function restoreSettlement(db: KharchaDB, id: string): Promise<void> {
   const s = await db.groupSettlements.get(id)
-  if (s) await writeLocal(db, 'settlement', { ...s, deletedAt: null, updatedAt: Date.now() })
+  if (!s || !s.deletedAt) return
+  const me = await myMemberId(db, s.groupId)
+  if (!canManagePayment(s, me)) throw new Error('Only the person who recorded this payment, or who received it, can restore it')
+  const now = Date.now()
+  await writeLocal(db, 'settlement', { ...s, deletedAt: null, history: withEvent(s, { at: now, by: me, action: 'restored' }), updatedAt: now })
 }
 
 /* ───────────────────────── Sync ───────────────────────── */

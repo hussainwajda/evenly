@@ -6,6 +6,7 @@ export interface Group {
   id: string
   name: string
   kind: GroupKind
+  /** Group-wide: show the fewest payments instead of who owes whom directly. Off by default. */
   simplifyDebts: boolean
   createdBy: string
   createdAt: number
@@ -58,6 +59,18 @@ export interface GroupExpense {
 export type SettlementMethod = 'upi' | 'cash' | 'bank' | 'other'
 export type SettlementStatus = 'recorded' | 'confirmed' | 'disputed'
 
+export type SettlementAction = 'recorded' | 'confirmed' | 'disputed' | 'edited' | 'deleted' | 'restored'
+
+/** One step in a payment's history. `by` is a group-member id. */
+export interface SettlementEvent {
+  at: number
+  by: string | null
+  action: SettlementAction
+  /** For 'edited': the new and the previous amount. */
+  amount?: number
+  prevAmount?: number
+}
+
 export interface Settlement {
   id: string
   groupId: string
@@ -72,6 +85,11 @@ export interface Settlement {
   status: SettlementStatus
   updatedAt: number
   deletedAt: number | null
+  /** Member who recorded it. Missing on payments made before payment history existed. */
+  createdBy?: string | null
+  createdAt?: number
+  /** Append-only log of who did what (newest last). */
+  history?: SettlementEvent[]
 }
 
 export type GroupRecordKind = 'expense' | 'settlement'

@@ -3,8 +3,10 @@ import { useEffect } from 'react'
 import { Outlet, ScrollRestoration, useSearchParams } from 'react-router'
 import { ExpenseSheet } from '@/components/ExpenseSheet'
 import { GroupExpenseDetail } from '@/components/groups/GroupExpenseDetail'
+import { PaymentDetailSheet } from '@/components/groups/PaymentDetailSheet'
 import { GroupExpenseSheet } from '@/components/groups/GroupExpenseSheet'
 import { SettleUpSheet } from '@/components/groups/SettleUpSheet'
+import { SimplifyExplainSheet } from '@/components/groups/SimplifyExplainSheet'
 import { BottomNav } from '@/components/layout/BottomNav'
 import { PwaPrompt } from '@/components/layout/PwaPrompt'
 import { Sidebar } from '@/components/layout/Sidebar'
@@ -77,6 +79,8 @@ export function AppShell() {
       <GroupExpenseSheet />
       <GroupExpenseDetail />
       <SettleUpSheet />
+      <PaymentDetailSheet />
+      <SimplifyExplainSheet />
       <PwaPrompt />
       <AccountConflictDialog />
       <ScrollRestoration />

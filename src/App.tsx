@@ -7,7 +7,9 @@ import { ActivityPage } from '@/pages/ActivityPage'
 import { BudgetPage } from '@/pages/BudgetPage'
 import { CategoriesPage } from '@/pages/CategoriesPage'
 import { DataPage } from '@/pages/DataPage'
+import { FriendPage } from '@/pages/FriendPage'
 import { GroupPage } from '@/pages/GroupPage'
+import { GroupPairPage } from '@/pages/GroupPairPage'
 import { HomePage } from '@/pages/HomePage'
 import { JoinPage } from '@/pages/JoinPage'
 import { MorePage } from '@/pages/MorePage'
@@ -36,6 +38,8 @@ const router = createBrowserRouter([
       { path: 'settings', element: <SettingsPage /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'groups/:id', element: <GroupPage /> },
+      { path: 'groups/:id/with/:memberId', element: <GroupPairPage /> },
+      { path: 'friends/:userId', element: <FriendPage /> },
       { path: 'join/:token', element: <JoinPage /> },
       {
         path: 'import',

@@ -134,6 +134,18 @@ export function createGroupApi(client: SupabaseClient, userId: string) {
       fail(error)
       return (data ?? []) as ActivityItem[]
     },
+    /** Server-side history of one expense or payment, oldest first. */
+    async fetchRecordHistory(groupId: string, recordId: string): Promise<ActivityItem[]> {
+      const { data, error } = await client
+        .from('group_activity')
+        .select('id, actor, action, record_id, summary, created_at')
+        .eq('group_id', groupId)
+        .eq('record_id', recordId)
+        .order('id', { ascending: true })
+        .limit(100)
+      fail(error)
+      return (data ?? []) as ActivityItem[]
+    },
     async getMyProfile(): Promise<MyProfile | null> {
       const { data, error } = await client.from('profiles').select('display_name, upi_id').eq('user_id', userId).maybeSingle()
       fail(error)

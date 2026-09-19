@@ -62,6 +62,16 @@ interface UiState {
   settleSheet: SettleSheetState
   openSettle: (opts: { groupId: string; from?: string; to?: string; amount?: number; expenseId?: string }) => void
   closeSettle: () => void
+
+  /** Details and history of one group payment. */
+  paymentDetail: { open: boolean; session: number; settlementId: string | null }
+  openPaymentDetail: (settlementId: string) => void
+  closePaymentDetail: () => void
+
+  /** "Why this amount?" for a simplified payment suggestion. */
+  explainSheet: { open: boolean; session: number; groupId: string | null; from: string | null; to: string | null }
+  openExplain: (opts: { groupId: string; from: string; to: string }) => void
+  closeExplain: () => void
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -120,4 +130,12 @@ export const useUi = create<UiState>((set) => ({
       },
     })),
   closeSettle: () => set((s) => ({ settleSheet: { ...s.settleSheet, open: false } })),
+
+  paymentDetail: { open: false, session: 0, settlementId: null },
+  openPaymentDetail: (settlementId) => set((s) => ({ paymentDetail: { open: true, session: s.paymentDetail.session + 1, settlementId } })),
+  closePaymentDetail: () => set((s) => ({ paymentDetail: { ...s.paymentDetail, open: false } })),
+
+  explainSheet: { open: false, session: 0, groupId: null, from: null, to: null },
+  openExplain: (opts) => set((s) => ({ explainSheet: { open: true, session: s.explainSheet.session + 1, ...opts } })),
+  closeExplain: () => set((s) => ({ explainSheet: { ...s.explainSheet, open: false } })),
 }))

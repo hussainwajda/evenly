@@ -54,6 +54,14 @@ Evenly works fully offline without this. These steps turn on **Continue with Goo
    - row-level security, so only a group's members can see it
 3. Invite links look like `http://localhost:5173/join/â€¦`. They're already covered by the `http://localhost:5173/**` redirect URL from step 3. For a deployed app, add `https://<your-domain>/**` too.
 
+## 6. Payment history and clearer balances
+
+1. In the Supabase **SQL Editor**, open a new query.
+2. Paste the whole file `supabase/migrations/20260920000000_evenly_payment_history.sql` and click **Run**. It's safe to run again. It:
+   - turns **simplify debts off** by default, and switches existing groups to direct balances (any member can turn it back on per group)
+   - makes the server enforce payment rules: only the receiver can confirm a payment or mark it "not received", and only the person who recorded it or the receiver can edit, delete or restore it
+   - keeps more detail in the activity log (method, bill, previous amount and status), so each payment's full history can be shown
+
 ## How sync behaves
 
 - **Offline first:** every change is written to the phone's database together with a queue entry, in one transaction. Nothing waits for the network.

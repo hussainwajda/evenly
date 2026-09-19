@@ -91,6 +91,8 @@ export interface Person {
   note: string
   archived: boolean
   createdAt: number
+  /** Evenly account of the same person in shared groups, so their private entries show on their friend page. */
+  linkedUserId?: string | null
 }
 
 /**

@@ -79,6 +79,23 @@ export interface Transfer {
   amount: number
 }
 
+/**
+ * The direct debts one bill creates: each person's share is owed to the payer(s), split between
+ * several payers in proportion to what they paid. Self-debts are left out.
+ */
+export function expenseDebts(e: GroupExpense): Transfer[] {
+  const payers = e.payers.filter((p) => p.amount > 0)
+  if (!payers.length) return []
+  const out: Transfer[] = []
+  for (const s of e.shares) {
+    const parts = largestRemainder(s.amount, payers.map((p) => p.amount))
+    payers.forEach((p, i) => {
+      if (p.memberId !== s.memberId && parts[i]) out.push({ from: s.memberId, to: p.memberId, amount: parts[i] })
+    })
+  }
+  return out
+}
+
 /** Who owes whom, pair by pair (no simplification). */
 export function pairwiseDebts(expenses: GroupExpense[], settlements: Settlement[]): Transfer[] {
   const pair = new Map<string, number>() // "a|b" with a < b; positive → a owes b
@@ -90,12 +107,7 @@ export function pairwiseDebts(expenses: GroupExpense[], settlements: Settlement[
   }
   for (const e of expenses) {
     if (e.deletedAt) continue
-    const payers = e.payers.filter((p) => p.amount > 0)
-    if (!payers.length) continue
-    for (const s of e.shares) {
-      const parts = largestRemainder(s.amount, payers.map((p) => p.amount))
-      payers.forEach((p, i) => owe(s.memberId, p.memberId, parts[i]))
-    }
+    for (const d of expenseDebts(e)) owe(d.from, d.to, d.amount)
   }
   for (const s of settlements) if (counts(s)) owe(s.from, s.to, -s.amount)
 
@@ -135,6 +147,12 @@ export function groupTransfers(simplify: boolean, expenses: GroupExpense[], sett
 
 export type ShareState = 'payer' | 'pending' | 'partial' | 'paid' | 'confirmed'
 
+/** A payment (or part of one) that paid off a share. */
+export interface Coverage {
+  settlementId: string
+  amount: number
+}
+
 export interface ShareStatus {
   memberId: string
   payerId: string | null
@@ -142,35 +160,40 @@ export interface ShareStatus {
   paid: number
   remaining: number
   state: ShareState
-  /** Settled because the person's overall group balance is clear (simplified payments), not by a direct payment. */
+  /**
+   * "Balanced out": no payment covers it, but with simplify on the person's overall group balance
+   * is clear, so they have nothing left to pay.
+   */
   settledOverall: boolean
+  /** The payments that paid this share off, oldest first. */
+  coveredBy: Coverage[]
 }
 
 /**
  * Paid status of every share:
  *  • "I've paid" payments tied to an expense count toward that share;
- *  • general settle-up payments between two people fill that pair's oldest open shares first;
- *  • with simplify on, anyone whose overall balance is clear has their shares shown as settled.
+ *  • general settle-up payments between two people fill that pair's oldest open shares first
+ *    (oldest payment first);
+ *  • with simplify on, anyone whose overall balance is clear has their shares shown as balanced out.
  */
 export function shareStatuses(expenses: GroupExpense[], settlements: Settlement[], simplify: boolean): Map<string, ShareStatus[]> {
   const live = expenses.filter((e) => !e.deletedAt).sort((a, b) => a.occurredAt - b.occurredAt || a.id.localeCompare(b.id))
   const nets = memberNets(expenses, settlements)
-  const paid = new Map<string, number>()
+  const covered = new Map<string, Coverage[]>()
   const unconfirmed = new Set<string>()
-  const pool = new Map<string, { amount: number; confirmed: boolean }>()
+  const pools = new Map<string, { s: Settlement; left: number }[]>()
+  const cover = (key: string, s: Settlement, amount: number) => {
+    covered.set(key, [...(covered.get(key) ?? []), { settlementId: s.id, amount }])
+    if (s.status !== 'confirmed') unconfirmed.add(key)
+  }
+  const sum = (key: string) => (covered.get(key) ?? []).reduce((a, c) => a + c.amount, 0)
 
-  for (const s of settlements) {
-    if (!counts(s)) continue
-    if (s.expenseId) {
-      const key = `${s.expenseId}|${s.from}`
-      paid.set(key, (paid.get(key) ?? 0) + s.amount)
-      if (s.status !== 'confirmed') unconfirmed.add(key)
-    } else {
+  const ordered = settlements.filter(counts).sort((a, b) => a.occurredAt - b.occurredAt || a.id.localeCompare(b.id))
+  for (const s of ordered) {
+    if (s.expenseId) cover(`${s.expenseId}|${s.from}`, s, s.amount)
+    else {
       const key = `${s.from}>${s.to}`
-      const cur = pool.get(key) ?? { amount: 0, confirmed: true }
-      cur.amount += s.amount
-      cur.confirmed = cur.confirmed && s.status === 'confirmed'
-      pool.set(key, cur)
+      pools.set(key, [...(pools.get(key) ?? []), { s, left: s.amount }])
     }
   }
 
@@ -179,17 +202,17 @@ export function shareStatuses(expenses: GroupExpense[], settlements: Settlement[
   for (const e of live) {
     const payer = payerOf(e)
     if (!payer) continue
-    for (const s of e.shares) {
-      if (s.memberId === payer) continue
-      const key = `${e.id}|${s.memberId}`
-      const already = paid.get(key) ?? 0
-      if (already >= s.amount) continue
-      const p = pool.get(`${s.memberId}>${payer}`)
-      if (!p || p.amount <= 0) continue
-      const take = Math.min(p.amount, s.amount - already)
-      p.amount -= take
-      paid.set(key, already + take)
-      if (!p.confirmed) unconfirmed.add(key)
+    for (const sh of e.shares) {
+      if (sh.memberId === payer) continue
+      const key = `${e.id}|${sh.memberId}`
+      for (const p of pools.get(`${sh.memberId}>${payer}`) ?? []) {
+        const need = sh.amount - sum(key)
+        if (need <= 0) break
+        if (p.left <= 0) continue
+        const take = Math.min(p.left, need)
+        p.left -= take
+        cover(key, p.s, take)
+      }
     }
   }
 
@@ -198,25 +221,140 @@ export function shareStatuses(expenses: GroupExpense[], settlements: Settlement[
     const payer = payerOf(e)
     result.set(
       e.id,
-      e.shares.map((s): ShareStatus => {
-        const key = `${e.id}|${s.memberId}`
-        if (s.memberId === payer) {
-          return { memberId: s.memberId, payerId: payer, share: s.amount, paid: s.amount, remaining: 0, state: 'payer', settledOverall: false }
+      e.shares.map((sh): ShareStatus => {
+        const key = `${e.id}|${sh.memberId}`
+        if (sh.memberId === payer) {
+          return { memberId: sh.memberId, payerId: payer, share: sh.amount, paid: sh.amount, remaining: 0, state: 'payer', settledOverall: false, coveredBy: [] }
         }
-        let p = Math.min(paid.get(key) ?? 0, s.amount)
+        const coveredBy = covered.get(key) ?? []
+        let p = Math.min(sum(key), sh.amount)
         let settledOverall = false
-        if (p < s.amount && simplify && (nets.get(s.memberId) ?? 0) >= 0) {
-          p = s.amount
+        if (p < sh.amount && simplify && (nets.get(sh.memberId) ?? 0) >= 0) {
+          p = sh.amount
           settledOverall = true
         }
-        const remaining = s.amount - p
+        const remaining = sh.amount - p
         const state: ShareState =
           remaining === 0 ? (settledOverall || unconfirmed.has(key) ? 'paid' : 'confirmed') : p > 0 ? 'partial' : 'pending'
-        return { memberId: s.memberId, payerId: payer, share: s.amount, paid: p, remaining, state, settledOverall }
+        return { memberId: sh.memberId, payerId: payer, share: sh.amount, paid: p, remaining, state, settledOverall, coveredBy }
       }),
     )
   }
   return result
+}
+
+export interface PaidOff {
+  expenseId: string
+  memberId: string
+  amount: number
+}
+
+/** The other way round: for each payment, the shares it paid off. Whatever isn't listed is extra credit. */
+export function paymentAllocations(statuses: Map<string, ShareStatus[]>): Map<string, PaidOff[]> {
+  const out = new Map<string, PaidOff[]>()
+  for (const [expenseId, list] of statuses) {
+    for (const st of list) {
+      for (const c of st.coveredBy) {
+        out.set(c.settlementId, [...(out.get(c.settlementId) ?? []), { expenseId, memberId: st.memberId, amount: c.amount }])
+      }
+    }
+  }
+  return out
+}
+
+/* ───────────────────────── Explaining balances ───────────────────────── */
+
+export interface PairRow {
+  kind: 'expense' | 'settlement'
+  id: string
+  at: number
+  expense?: GroupExpense
+  settlement?: Settlement
+  /** What `b` owes `a` because of this bill (bills only). */
+  bOwesA: number
+  /** What `a` owes `b` because of this bill (bills only). */
+  aOwesB: number
+  /** Change to "b owes a". Positive: b owes a more. 0 for items that don't count (deleted, disputed). */
+  delta: number
+  /** "b owes a" after this row (negative: a owes b). */
+  running: number
+  counts: boolean
+}
+
+export interface PairLedger {
+  rows: PairRow[]
+  /** Final "b owes a"; always equals the direct (non-simplified) balance between the two. */
+  balance: number
+  /** Live bills in the group that didn't move money between these two. */
+  otherBills: number
+}
+
+/**
+ * Statement between two members: every bill and payment that moved money between `a` and `b`,
+ * oldest first, with a running balance. Deleted bills and deleted or disputed payments are listed
+ * but not counted.
+ */
+export function pairLedger(expenses: GroupExpense[], settlements: Settlement[], a: string, b: string): PairLedger {
+  const items: Omit<PairRow, 'running'>[] = []
+  let otherBills = 0
+  for (const e of expenses) {
+    let bOwesA = 0
+    let aOwesB = 0
+    for (const d of expenseDebts(e)) {
+      if (d.from === b && d.to === a) bOwesA += d.amount
+      else if (d.from === a && d.to === b) aOwesB += d.amount
+    }
+    if (!bOwesA && !aOwesB) {
+      if (!e.deletedAt) otherBills++
+      continue
+    }
+    const live = !e.deletedAt
+    items.push({ kind: 'expense', id: e.id, at: e.occurredAt, expense: e, bOwesA, aOwesB, delta: live ? bOwesA - aOwesB : 0, counts: live })
+  }
+  for (const s of settlements) {
+    const sign = s.from === b && s.to === a ? -1 : s.from === a && s.to === b ? 1 : 0
+    if (!sign) continue
+    const c = counts(s)
+    items.push({ kind: 'settlement', id: s.id, at: s.occurredAt, settlement: s, bOwesA: 0, aOwesB: 0, delta: c ? sign * s.amount : 0, counts: c })
+  }
+  items.sort((x, y) => x.at - y.at || (x.kind === y.kind ? x.id.localeCompare(y.id) : x.kind === 'expense' ? -1 : 1))
+  let running = 0
+  const rows = items.map((it) => {
+    running += it.delta
+    return { ...it, running }
+  })
+  return { rows, balance: running, otherBills }
+}
+
+export interface NetBreakdown {
+  /** Total this member paid for bills. */
+  paid: number
+  /** Total of this member's shares. */
+  share: number
+  /** Payments they made to others. */
+  sent: number
+  /** Payments they received from others. */
+  received: number
+  /** paid − share + sent − received; positive = the group owes them. */
+  net: number
+}
+
+export function netBreakdown(expenses: GroupExpense[], settlements: Settlement[], memberId: string): NetBreakdown {
+  let paid = 0
+  let share = 0
+  let sent = 0
+  let received = 0
+  for (const e of expenses) {
+    if (e.deletedAt) continue
+    paid += e.payers.find((p) => p.memberId === memberId)?.amount ?? 0
+    share += e.shares.find((s) => s.memberId === memberId)?.amount ?? 0
+  }
+  for (const s of settlements) {
+    if (!counts(s)) continue
+    if (s.from === memberId) sent += s.amount
+    if (s.to === memberId) received += s.amount
+  }
+  return { paid, share, sent, received, net: paid - share + sent - received }
 }
 
 /** My position in one expense: what I paid, my share, and what I lent (+) or borrowed (−). */
@@ -225,4 +363,21 @@ export function myRole(e: GroupExpense, meId: string | null): { paid: number; sh
   const paid = e.payers.find((p) => p.memberId === meId)?.amount ?? 0
   const share = e.shares.find((s) => s.memberId === meId)?.amount ?? 0
   return { paid, share, lent: paid - share }
+}
+
+/* ───────────────────────── Payment rules ───────────────────────── */
+
+/** Only the person who received a payment can confirm it or say it never arrived. */
+export function canConfirmPayment(s: Settlement, meId: string | null): boolean {
+  return Boolean(meId) && s.to === meId
+}
+
+/**
+ * Only the person who recorded a payment, or the receiver, can delete, restore or edit it.
+ * Payments from before history existed don't say who recorded them, so either side may.
+ */
+export function canManagePayment(s: Settlement, meId: string | null): boolean {
+  if (!meId) return false
+  if (s.to === meId || s.createdBy === meId) return true
+  return !s.createdBy && s.from === meId
 }

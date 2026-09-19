@@ -3,6 +3,7 @@ import { ChevronDown, Plus, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { EmptyState, PageHeader, Panel, Section } from '@/components/common'
+import { FriendsSection } from '@/components/groups/FriendsSection'
 import { GroupsSection } from '@/components/groups/GroupsSection'
 import { Avatar } from '@/components/PeoplePicker'
 import { Button } from '@/components/ui/button'
@@ -83,6 +84,7 @@ export function PeoplePage() {
       />
       <div className="space-y-6 px-4 pt-2 lg:max-w-3xl">
         <GroupsSection />
+        <FriendsSection />
 
         <div className="space-y-1 px-1">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Private lend & borrow</h2>

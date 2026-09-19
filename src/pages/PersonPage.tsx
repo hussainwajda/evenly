@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Archive, ArchiveRestore, ArrowDownLeft, ArrowUpRight, Handshake, MessageCircle, MoreVertical, Pencil, UserX } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowDownLeft, ArrowUpRight, ChevronRight, Handshake, MessageCircle, MoreVertical, Pencil, Users, UserX } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { EmptyState, PageHeader, Panel, Section } from '@/components/common'
 import { FormSheet } from '@/components/FormParts'
@@ -104,6 +104,16 @@ export function PersonPage() {
       />
 
       <div className="space-y-6 px-4 pt-2 lg:max-w-3xl">
+        {person.linkedUserId ? (
+          <Link
+            to={`/friends/${person.linkedUserId}`}
+            className="flex min-h-12 items-center gap-2 rounded-2xl border bg-card px-4 py-2 text-sm transition-colors hover:bg-accent/40 active:bg-accent/60"
+          >
+            <Users className="size-4 text-brand" aria-hidden />
+            <span className="min-w-0 flex-1">Also in your shared groups. See everything between you, including groups.</span>
+            <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
+          </Link>
+        ) : null}
         <Panel className="space-y-4 text-center">
           <Avatar name={person.name} className="mx-auto size-16 text-xl" />
           <div>
